@@ -23,7 +23,7 @@ from craft import CRAFT
 
 from collections import OrderedDict
 
-from videoloader import video_stream, ffprobe, VideoLoader
+from videoloader import video_stream, ffprobe, VideoLoader, VideoEncoder
 
 
 def copyStateDict(state_dict):
@@ -54,6 +54,9 @@ parser.add_argument('--poly', default=False, action='store_true', help='enable p
 parser.add_argument('--show_time', default=False, action='store_true', help='show processing time')
 parser.add_argument('--test_folder', type=str, help='folder path to input images')
 parser.add_argument('--test_video', type=str, help='video path to input images')
+parser.add_argument('--result_folder', type=str, help='result output folder')
+parser.add_argument('--result_video', type=str, help='result output video file')
+parser.add_argument('--result_csv', type=str, help='result csv file')
 
 args = parser.parse_args()
 
@@ -62,13 +65,15 @@ def test_net(net, image, text_threshold, link_threshold, low_text, cuda, poly):
     t0 = time.time()
 
     # resize
-    img_resized, target_ratio, size_heatmap = imgproc.resize_aspect_ratio(image, args.canvas_size, interpolation=cv2.INTER_LINEAR, mag_ratio=args.mag_ratio)
+    img_resized, target_ratio, size_heatmap = imgproc.resize_aspect_ratio(image, args.canvas_size,
+                                                                          interpolation=cv2.INTER_LINEAR,
+                                                                          mag_ratio=args.mag_ratio)
     ratio_h = ratio_w = 1 / target_ratio
 
     # preprocessing
     x = imgproc.normalizeMeanVariance(img_resized)
-    x = torch.from_numpy(x).permute(2, 0, 1)    # [h, w, c] to [c, h, w]
-    x = Variable(x.unsqueeze(0))                # [c, h, w] to [b, c, h, w]
+    x = torch.from_numpy(x).permute(2, 0, 1)  # [h, w, c] to [c, h, w]
+    x = Variable(x.unsqueeze(0))  # [c, h, w] to [b, c, h, w]
     if cuda:
         x = x.cuda()
 
@@ -76,8 +81,8 @@ def test_net(net, image, text_threshold, link_threshold, low_text, cuda, poly):
     y, _ = net(x)
 
     # make score and link map
-    score_text = y[0,:,:,0].cpu().data.numpy()
-    score_link = y[0,:,:,1].cpu().data.numpy()
+    score_text = y[0, :, :, 0].cpu().data.numpy()
+    score_link = y[0, :, :, 1].cpu().data.numpy()
 
     t0 = time.time() - t0
     t1 = time.time()
@@ -98,18 +103,19 @@ def test_net(net, image, text_threshold, link_threshold, low_text, cuda, poly):
     render_img = np.hstack((render_img, score_link))
     ret_score_text = imgproc.cvt2HeatmapImg(render_img)
 
-    if args.show_time : print("\ninfer/postproc time : {:.3f}/{:.3f}".format(t0, t1))
+    if args.show_time: print("\ninfer/postproc time : {:.3f}/{:.3f}".format(t0, t1))
 
     return boxes, polys, ret_score_text
-
 
 
 if __name__ == '__main__':
     """ For test images in a folder """
 
-    result_folder = './result/'
-    if not os.path.isdir(result_folder):
-        os.mkdir(result_folder)
+    result_folder = None
+    if args.result_folder is not None:
+        result_folder = args.result_folder
+        if not os.path.isdir(result_folder):
+            os.mkdir(result_folder)
 
     # load net
     net = CRAFT()  # initialize
@@ -146,16 +152,36 @@ if __name__ == '__main__':
 
             file_utils.saveResult(image_path, image[:, :, ::-1], polys, dirname=result_folder)
     elif args.test_video is not None:
-        print('ga')
         videopath = args.test_video
-        loader = VideoLoader(videopath, downscale=2.0)
+        loader = VideoLoader(videopath, downscale=2.0, startframe=42)
+        encoder = None
+        if args.result_video is not None:
+            encoder = VideoEncoder(args.result_video, loader.width16, loader.height16)
+        csvf = None
+        if args.result_csv is not None:
+            csvf = open(args.result_csv, 'w')
+
         for fn in range(0, loader.duration):
             t = time.time()
             image = loader.readnextframe()
             bboxes, polys, score_text = test_net(net, image, args.text_threshold, args.link_threshold, args.low_text,
                                                  args.cuda, args.poly)
             # save score text
-            mask_file = result_folder + "/res_%06d_mask.jpg" % fn
-            cv2.imwrite(mask_file, score_text)
-            file_utils.saveResult('%06d.xxx' % fn, image[:, :, ::-1], polys, dirname=result_folder)
+            if encoder is not None:
+                rimg = file_utils.resultImg(image[:, :, ::-1], polys)
+                encoder.imwrite(rimg)
+            elif result_folder is not None:
+                mask_file = result_folder + "/res_%06d_mask.jpg" % fn
+                cv2.imwrite(mask_file, score_text)
+                file_utils.saveResult('%06d.xxx' % fn, image[:, :, ::-1], polys, dirname=result_folder)
+            if csvf is not None:
+                ppolys = [np.array(box).astype(np.int32).reshape((-1)) for box in polys]
+                strResult = ','.join([','.join([str(p) for p in poly]) for poly in ppolys])
+                csvf.write('%d,%s\n' % (fn, strResult))
+
             print("{}s".format(time.time() - t))
+
+        if encoder is not None:
+            encoder.close()
+        if csvf is not None:
+            encoder.close()

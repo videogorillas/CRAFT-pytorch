@@ -148,3 +148,39 @@ class VideoLoader:
             (self.height16, self.width16, 3))
         self.nextfn += 1
         return nb * self.want255
+
+
+class VideoEncoder:
+    def __init__(self, outpath: str, in_w: int, in_h: int, fps: int = 24, crf: int = 21, in_pix_fmt: str = 'bgr24',
+                 out_pix_fmt: str = 'yuv420p'):
+        self.in_h = in_h
+        self.in_w = in_w
+        self.cmd = ['ffmpeg',
+                    '-v', 'info',
+                    '-f', 'rawvideo',
+                    '-pix_fmt', in_pix_fmt, "-s:v", "%dx%d" % (in_w, in_h),
+                    '-r', str(fps),
+                    '-i', '-',
+                    '-vcodec', 'libx264', '-g', str(int(fps)), '-bf', '0', '-crf', str(crf), '-pix_fmt', out_pix_fmt,
+                    '-movflags', 'faststart', '-y', outpath]
+        self.process = None
+
+    def forkffmpeg(self):
+        print(self.cmd)
+        self.process = Popen(self.cmd, stdin=subprocess.PIPE)
+
+    def imwrite(self, img: np.ndarray):
+        if self.process is None:
+            self.forkffmpeg()
+        h = np.shape(img)[0]
+        w = np.shape(img)[1]
+        assert self.in_w == w and self.in_h == h
+        uimg = img
+        if img.dtype != np.uint8:
+            uimg = img.astype(np.uint8)
+        self.process.stdin.write(uimg.tobytes('C'))
+
+    def close(self):
+        if self.process is not None:
+            self.process.stdin.close()
+            self.process.wait(10.0)
