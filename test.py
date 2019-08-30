@@ -153,7 +153,7 @@ if __name__ == '__main__':
             file_utils.saveResult(image_path, image[:, :, ::-1], polys, dirname=result_folder)
     elif args.test_video is not None:
         videopath = args.test_video
-        loader = VideoLoader(videopath, downscale=2.0, startframe=42)
+        loader = VideoLoader(videopath, downscale=2.0)
         encoder = None
         if args.result_video is not None:
             encoder = VideoEncoder(args.result_video, loader.width16, loader.height16)
