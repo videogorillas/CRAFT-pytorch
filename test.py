@@ -184,4 +184,5 @@ if __name__ == '__main__':
         if encoder is not None:
             encoder.close()
         if csvf is not None:
-            encoder.close()
+            csvf.close()
+
